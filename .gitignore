@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.vite/
+coverage/
+test-results/
+playwright-report/
+.cache/
+*.log
+.env
+.env.*
+!.env.example
+books-local/
+backups-local/
+.DS_Store
+Thumbs.db
