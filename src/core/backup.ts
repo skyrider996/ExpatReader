@@ -1,5 +1,6 @@
 import { db, type ReaderDB } from './storage'
 import type { Annotation, LearningRecord, Locator, Progress } from './types'
+import { isHighlightColor } from './highlights'
 
 interface Backup { format: 'incremental-reader'; version: 1; exportedAt: number; books: { id: string; title: string; filename: string }[]; annotations: Annotation[]; learning: LearningRecord[]; progress: Progress[] }
 const object = (value: unknown): Record<string, unknown> => {
@@ -30,7 +31,12 @@ export function parseBackup(text: string): Backup {
   const backup: Backup = {
     format: 'incremental-reader', version: 1, exportedAt: number(v.exportedAt),
     books: array(v.books, value => { const x = object(value); return { id: bookId(x.id), title: string(x.title, 1000), filename: string(x.filename, 1000) } }),
-    annotations: array(v.annotations, value => { const x = object(value); return { ...base(x), note: string(x.note), ...(x.explanation === undefined ? {} : { explanation: string(x.explanation) }) } }),
+    annotations: array(v.annotations, value => {
+      const x = object(value), color = x.color, highlighted = x.highlighted
+      if (color !== undefined && !isHighlightColor(color)) throw new Error('备份标注颜色无效。')
+      if (highlighted !== undefined && typeof highlighted !== 'boolean') throw new Error('备份标注状态无效。')
+      return { ...base(x), note: string(x.note), ...(x.explanation === undefined ? {} : { explanation: string(x.explanation) }), ...(color === undefined ? {} : { color }), ...(highlighted === undefined ? {} : { highlighted }) }
+    }),
     learning: array(v.learning, value => { const x = object(value); return { ...base(x), explanation: string(x.explanation), targetLanguage: string(x.targetLanguage, 40) } }),
     progress: array(v.progress, value => { const x = object(value), location = locator(x.locator), source = bookId(x.bookId); if (location.bookId !== source) throw new Error('进度与书籍不一致。'); return { bookId: source, locator: location, updatedAt: number(x.updatedAt) } }),
   }

@@ -1,9 +1,12 @@
 import { LocationAdapter, isUI } from '../adapters/location'
 import type { OutlineItem, Passage, Locator } from './types'
+import { readingSlice } from './reading-tasks'
 
 const BLOCKS = 'p,li,blockquote,dd,dt,h1,h2,h3,h4,h5,h6,pre,td,th,div,section,article,body'
 export class ContentService {
   private sections = new Map<number, Promise<Passage[]>>()
+  private background = new Set<number>()
+  private lifecycle = new AbortController()
   readonly outline: OutlineItem[] = []
   constructor(readonly bookId: string, readonly book: any, readonly locations: LocationAdapter) {
     const firstHref = (item: any): string => typeof item.href === 'string' && item.href ? item.href : (item.subitems ?? []).map(firstHref).find(Boolean) ?? ''
@@ -23,36 +26,56 @@ export class ContentService {
     if (!Number.isInteger(section) || !this.book.sections[section]) throw new Error('无效的章节。')
     return this.book.sections[section].createDocument()
   }
-  getSection(section: number): Promise<Passage[]> {
+  getSection(section: number, options: { background?: boolean } = {}): Promise<Passage[]> {
+    if (this.lifecycle.signal.aborted) return Promise.reject(this.lifecycle.signal.reason)
+    if (!options.background) this.background.delete(section)
     if (!this.sections.has(section)) {
+      if (options.background) this.background.add(section)
       const request = this.extract(section).catch(e => { this.sections.delete(section); throw e })
       this.sections.set(section, request)
     }
     return this.sections.get(section)!
   }
   private async extract(section: number): Promise<Passage[]> {
+    const signal = this.lifecycle.signal
+    let deadline = await readingSlice(signal, this.background.has(section))
     const doc = await this.document(section)
+    signal.throwIfAborted()
     const root = doc.body ?? doc.documentElement
     const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT, { acceptNode: node => {
       const parent = node.parentElement
-      return !node.textContent?.trim() || isUI(node) || parent?.closest('script,style,noscript,nav,[hidden]') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT
+      return isUI(node) || parent?.closest('script,style,noscript') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT
     } })
-    const groups: Text[][] = []
+    const groups: { nodes: Text[]; start: number; end: number }[] = []
+    const text: string[] = []
+    let offset = 0
     let previous: Element | null = null
     let node: Node | null
     while ((node = walker.nextNode())) {
-      const block = node.parentElement?.closest(BLOCKS) ?? root
-      if (previous !== block) groups.push([])
-      groups.at(-1)!.push(node as Text); previous = block
+      const value = node.textContent || ''
+      text.push(value)
+      if (value.trim() && !node.parentElement?.closest('nav,[hidden]')) {
+        const block = node.parentElement?.closest(BLOCKS) ?? root
+        if (previous !== block) groups.push({ nodes: [], start: offset, end: offset })
+        groups.at(-1)!.nodes.push(node as Text); groups.at(-1)!.end = offset + value.length; previous = block
+      }
+      offset += value.length
+      if (performance.now() >= deadline) deadline = await readingSlice(signal, this.background.has(section))
     }
-    return groups.map((nodes, ordinal) => {
+    // Context offsets refer to all original body text, including whitespace and
+    // excluded navigation, exactly as LocationAdapter.capture/resolve do.
+    const original = text.join(''), passages: Passage[] = []
+    for (const [ordinal, { nodes, start, end }] of groups.entries()) {
+      if (performance.now() >= deadline) deadline = await readingSlice(signal, this.background.has(section))
       const range = doc.createRange()
       range.setStart(nodes[0], 0); range.setEnd(nodes.at(-1)!, nodes.at(-1)!.length)
-      const locator = this.locations.capture(section, range)
-      return { id: `${this.bookId}:${section}:${ordinal}`, bookId: this.bookId, section, ordinal,
-        chapter: this.title(section), text: locator.quote, locator }
-    })
+      const locator = this.locations.capture(section, range, { prefix: original.slice(Math.max(0, start - 40), start), suffix: original.slice(end, end + 40) })
+      passages.push({ id: `${this.bookId}:${section}:${ordinal}`, bookId: this.bookId, section, ordinal,
+        chapter: this.title(section), text: locator.quote, locator })
+    }
+    return passages
   }
+  dispose() { this.lifecycle.abort(); this.sections.clear(); this.background.clear() }
   async readPassage(bookId: string, locator: Locator, options: { before?: number; after?: number; maxChars?: number } = {}) {
     this.assertBook(bookId)
     const doc = await this.document(locator.section)

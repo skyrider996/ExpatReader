@@ -1,0 +1,113 @@
+import { test, expect, type Page } from '@playwright/test'
+import path from 'node:path'
+
+async function openBook(page: Page) {
+  await page.goto('/')
+  await page.getByLabel('导入 EPUB', { exact: true }).setInputFiles(path.resolve('tests/fixtures/A-small-journey.epub'))
+  await expect(page.getByText('正在打开书籍…', { exact: true })).toHaveCount(0)
+}
+async function selectWord(page: Page, selector = 'em') {
+  const frame = page.frames().find(f => f.url().startsWith('blob:'))!
+  await frame.evaluate(selector => {
+    const range = document.createRange(); range.selectNodeContents(document.querySelector(selector)!)
+    const selection = getSelection()!; selection.removeAllRanges(); selection.addRange(range)
+    document.dispatchEvent(new Event('pointerup'))
+  }, selector)
+  if (!await page.getByRole('complementary', { name: '查询面板' }).isVisible()) await page.getByLabel('打开词典与翻译').click()
+}
+async function configureApi(page: Page) {
+  await page.getByLabel('更多工具').click()
+  await page.getByRole('button', { name: '设置', exact: true }).click()
+  await page.getByLabel('模型接口地址').fill('https://model.test/v1')
+  await page.getByLabel('模型名称', { exact: true }).fill('model-one')
+  await page.getByLabel('收起侧栏').click()
+}
+
+test('viewport stays bounded with independent drawers, scrolling and focus mode', async ({ page }) => {
+  await openBook(page)
+  await page.getByLabel('切换侧栏').click()
+  const left = page.locator('aside:not(.right-panel)')
+  await expect(left.getByRole('button', { name: 'AI', exact: true })).toHaveCount(0)
+  await page.getByLabel('打开 AI 对话').click()
+  const right = page.getByRole('complementary', { name: '查询面板' })
+  await expect(right.getByRole('button', { name: '笔记', exact: true })).toHaveCount(0)
+  await expect(right.getByLabel('本机 Codex 连接')).toHaveCount(0)
+  await page.mouse.move(600, 400); await page.mouse.wheel(0, 3000)
+  expect(await page.evaluate(() => ({ y: scrollY, height: document.documentElement.scrollHeight, viewport: innerHeight }))).toEqual({ y: 0, height: 1000, viewport: 1000 })
+  for (const viewport of [{ width: 1440, height: 650 }, { width: 620, height: 800 }]) {
+    await page.setViewportSize(viewport)
+    expect(await page.evaluate(() => document.documentElement.scrollHeight <= innerHeight && document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+    const composer = await page.getByLabel('向书籍提问').boundingBox()
+    expect(composer!.y + composer!.height).toBeLessThan(viewport.height)
+  }
+  await page.getByLabel('关闭查询面板').click()
+  await page.getByLabel('阅读布局').selectOption('scrolled')
+  await page.mouse.move(350, 400); await page.mouse.wheel(0, 3000)
+  expect(await page.evaluate(() => scrollY)).toBe(0)
+  await page.getByLabel('专注阅读', { exact: true }).click()
+  await expect(right).toBeHidden()
+  await expect(page.locator('header.app-header')).toBeHidden()
+  await page.keyboard.press('Escape')
+  await expect(page.locator('header.app-header')).toBeVisible()
+})
+
+test('dictionary renders definitions safely as rich text and edits only on request', async ({ page }) => {
+  await page.route('https://api.dictionaryapi.dev/**', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify([{ word: 'reluctantly', phonetic: '/rɪˈlʌktəntli/', meanings: [{ partOfSpeech: 'adverb', definitions: [{ definition: 'With **hesitation** or unwillingness.', example: 'She reluctantly agreed.' }, { definition: '<img src=x onerror="window.injected=true">' }] }] }]) }))
+  await openBook(page); await selectWord(page)
+  await expect(page.getByLabel('词句解释')).toHaveCount(0)
+  await page.getByRole('button', { name: '查询选中文字', exact: true }).click()
+  const result = page.getByLabel('词句释义')
+  await expect(result.getByRole('heading', { name: 'reluctantly' })).toBeVisible()
+  await expect(result.locator('strong')).toHaveText('hesitation')
+  await expect(result.locator('li')).toHaveCount(2)
+  await expect(result.locator('blockquote')).toContainText('She reluctantly agreed.')
+  await expect(result.locator('img')).toHaveCount(0)
+  await page.getByRole('button', { name: '手动编辑', exact: true }).click()
+  await page.getByLabel('词句解释').fill('## 自己的理解\n\n**不情愿地**\n• 修饰动作')
+  await page.getByRole('button', { name: '完成编辑', exact: true }).click()
+  await expect(result.locator('strong')).toHaveText('不情愿地')
+  await page.getByRole('button', { name: '保存解释', exact: true }).click()
+  await expect(page.locator('footer')).toContainText('学习记录已保存')
+  await page.getByRole('button', { name: '为选区做笔记', exact: true }).click()
+  await expect(page.locator('aside:not(.right-panel)').getByLabel('个人笔记')).toBeVisible()
+  await page.getByLabel('个人笔记').fill('记住这个语境')
+  await page.getByRole('button', { name: '保存批注', exact: true }).click()
+  await expect(page.locator('footer')).toContainText('批注已保存')
+  await page.screenshot({ path: '.cache/previews/dictionary-rich-text.png' })
+})
+
+test('chat keeps messages, input, selection and translation separate with model choice below output', async ({ page }) => {
+  const requests: any[] = []
+  await page.route('https://model.test/v1/models', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data: [{ id: 'model-one' }, { id: 'model-two' }] }) }))
+  await page.route('https://model.test/v1/chat/completions', route => {
+    requests.push(route.request().postDataJSON())
+    return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ choices: [{ message: { content: '## 阅读理解\n\n这里表达了**犹豫**。\n\n' + Array.from({ length: 30 }, (_, i) => `${i + 1}. 结合原文继续理解这一观点。`).join('\n') } }] }) })
+  })
+  await openBook(page); await configureApi(page); await selectWord(page)
+  await page.getByRole('button', { name: '手动编辑', exact: true }).click()
+  await page.getByLabel('词句解释').fill('留在词典里的释义')
+  await page.getByRole('button', { name: '完成编辑', exact: true }).click()
+  await page.getByRole('button', { name: 'AI 对话', exact: true }).click()
+  await expect(page.locator('#chat-model-options option')).toHaveCount(2)
+  await page.getByLabel('对话模型', { exact: true }).fill('model-two')
+  await page.getByLabel('向书籍提问').fill('这段表达了什么？')
+  await page.getByRole('button', { name: '提问', exact: true }).click()
+  await expect(page.locator('.chat-assistant strong')).toHaveText('犹豫')
+  expect(requests[0].model).toBe('model-two')
+  expect(requests[0].messages[1].content).toContain('reluctantly')
+  const output = await page.locator('.chat-messages').boundingBox(), composer = await page.locator('.chat-composer').boundingBox()
+  expect(output!.y + output!.height).toBeLessThanOrEqual(composer!.y)
+  expect(composer!.y + composer!.height).toBeLessThan(1000)
+  await page.getByLabel('向书籍提问').fill('尚未发送的问题')
+  await page.getByRole('button', { name: '词典与翻译', exact: true }).click()
+  await expect(page.getByLabel('词句释义')).toHaveText('留在词典里的释义')
+  await page.getByRole('button', { name: 'AI 对话', exact: true }).click()
+  await expect(page.getByLabel('向书籍提问')).toHaveValue('尚未发送的问题')
+  await selectWord(page, 'strong')
+  await expect(page.getByLabel('向书籍提问')).toBeVisible()
+  await expect(page.getByLabel('向书籍提问')).toHaveValue('尚未发送的问题')
+  await page.getByLabel('关闭查询面板').click(); await page.getByLabel('打开 AI 对话').click()
+  await expect(page.locator('article.answer')).toHaveCount(1)
+  await expect(page.getByLabel('向书籍提问')).toHaveValue('尚未发送的问题')
+  await page.screenshot({ path: '.cache/previews/chat-layout.png' })
+})

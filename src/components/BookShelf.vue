@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import type { BookRecord } from '../core/types'
 import UiIcon from './UiIcon.vue'
 const props = defineProps<{ books: BookRecord[]; currentId: string; busy: boolean }>()
-defineEmits<{ open: [book: BookRecord]; import: [event: Event] }>()
+defineEmits<{ open: [book: BookRecord]; import: [event: Event]; online: [] }>()
 const query = ref(''), sort = ref('recent')
 const covers = ref<Record<string, string>>({})
 watch(() => props.books, books => {
@@ -19,7 +19,7 @@ const filtered = computed(() => {
 </script>
 <template>
   <main class="library">
-    <div class="library-heading"><div><p class="eyebrow">YOUR LIBRARY</p><h1>我的书库<span>{{ books.length }} 本书</span></h1></div><label class="button primary import-large"><UiIcon name="plus" />导入 EPUB<input aria-label="导入 EPUB" type="file" accept=".epub" :disabled="busy" @change="$emit('import', $event)"></label></div>
+    <div class="library-heading"><div><p class="eyebrow">YOUR LIBRARY</p><h1>我的书库<span>{{ books.length }} 本书</span></h1></div><div class="library-import-actions"><button :disabled="busy" @click="$emit('online')">在线书源</button><label class="button primary import-large"><UiIcon name="plus" />导入 EPUB<input aria-label="导入 EPUB" type="file" accept=".epub" :disabled="busy" @change="$emit('import', $event)"></label></div></div>
     <div class="library-tools"><div class="library-search"><UiIcon name="search"/><input v-model="query" aria-label="搜索书库" placeholder="搜索书名或作者"></div><select v-model="sort" aria-label="书库排序"><option value="recent">最近阅读</option><option value="title">书名排序</option></select></div>
     <section v-if="books.length" class="book-grid" aria-label="书库">
       <button v-for="(item, index) in filtered" :key="item.id" class="book-card" :disabled="busy" @click="$emit('open', item)">

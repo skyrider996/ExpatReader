@@ -17,6 +17,15 @@ const database = () => { const d = new ReaderDB(`test-${crypto.randomUUID()}`); 
 afterEach(async () => { for (const d of databases.splice(0)) await d.delete(); vi.unstubAllGlobals() })
 
 describe('record backups', () => {
+  it('round trips annotation color and keeps a note without a highlight', async () => {
+    const source = database(), target = database()
+    await source.annotations.put({ ...annotation, color: 'magenta', highlighted: false })
+    const backup = await exportBackup(source)
+    await importBackup(backup, target)
+    expect(await target.annotations.get(annotation.id)).toMatchObject({ note: annotation.note, color: 'magenta', highlighted: false })
+    const invalid = JSON.parse(backup); invalid.annotations[0].color = 'not-a-preset'
+    expect(() => parseBackup(JSON.stringify(invalid))).toThrow('标注颜色无效')
+  })
   it('restores missing-book records, preserves newer edits and is idempotent', async () => {
     const source = database(), target = database()
     await source.annotations.put(annotation)

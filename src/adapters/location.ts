@@ -46,16 +46,19 @@ export class LocationAdapter {
     ;(parts.parent ?? parts).shift()
     return CFI.toRange(doc, parts, originalFilter)
   }
-  capture(section: number, range: Range): Locator {
+  capture(section: number, range: Range, context?: { prefix: string; suffix: string }): Locator {
     if (isUI(range.startContainer) || isUI(range.endContainer)) throw new Error('请选择原文，不包含解释区域。')
     range = textBoundaries(range)
     const quote = range.toString()
     if (quote !== sourceRangeText(range)) throw new Error('选区包含解释或非正文内容，请缩小选区。')
     const doc = range.startContainer.ownerDocument!
-    const before = doc.createRange(); before.selectNodeContents(doc.body); before.setEnd(range.startContainer, range.startOffset)
-    const after = doc.createRange(); after.selectNodeContents(doc.body); after.setStart(range.endContainer, range.endOffset)
+    if (!context) {
+      const before = doc.createRange(); before.selectNodeContents(doc.body); before.setEnd(range.startContainer, range.startOffset)
+      const after = doc.createRange(); after.selectNodeContents(doc.body); after.setStart(range.endContainer, range.endOffset)
+      context = { prefix: sourceRangeText(before).slice(-40), suffix: sourceRangeText(after).slice(0, 40) }
+    }
     return { bookId: this.bookId, section, cfi: this.cfi(section, range), quote,
-      prefix: sourceRangeText(before).slice(-40), suffix: sourceRangeText(after).slice(0, 40) }
+      prefix: context.prefix, suffix: context.suffix }
   }
   resolve(doc: Document, locator: Locator): Range {
     if (locator.bookId !== this.bookId || !this.book.sections[locator.section]) throw new Error('位置不属于当前书籍。')

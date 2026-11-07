@@ -3,8 +3,11 @@ import type { Passage, SearchHit } from './types'
 
 const segmenter = new Intl.Segmenter('zh', { granularity: 'word' })
 export const tokenize = (text: string) => Array.from(segmenter.segment(text.toLowerCase())).filter(x => x.isWordLike).map(x => x.segment)
+const options = { fields: ['text', 'chapter'], storeFields: ['bookId', 'section', 'ordinal', 'chapter', 'text', 'locator'], tokenize }
 export class PassageIndex {
-  private index = new MiniSearch<Passage>({ fields: ['text', 'chapter'], storeFields: ['bookId', 'section', 'ordinal', 'chapter', 'text', 'locator'], tokenize })
+  private index = new MiniSearch<Passage>(options)
+  serialize() { return JSON.stringify(this.index) }
+  restore(json: string) { this.index = MiniSearch.loadJSON<Passage>(json, options) }
   add(passages: Passage[]) { this.index.addAll(passages) }
   search(query: string, section?: number, limit = 20): SearchHit[] {
     if (!query.trim()) return []

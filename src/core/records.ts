@@ -1,12 +1,28 @@
 import { db } from './storage'
 import type { Annotation, LearningRecord, Locator } from './types'
+import { defaultHighlight, type HighlightColor } from './highlights'
 
-export async function saveAnnotation(locator: Locator, chapter: string, note?: string, explanation?: string) {
-  const existing = (await db.annotations.where('bookId').equals(locator.bookId).toArray()).find(x => x.locator.cfi === locator.cfi)
-  const item: Annotation = { id: existing?.id ?? crypto.randomUUID(), bookId: locator.bookId, locator, chapter, note: note ?? existing?.note ?? '',
-    explanation: explanation ?? existing?.explanation, createdAt: existing?.createdAt ?? Date.now(), updatedAt: Date.now() }
-  await db.annotations.put(item)
-  return item
+export async function saveAnnotation(locator: Locator, chapter: string, changes: { note?: string; explanation?: string; color?: HighlightColor; highlighted?: boolean } = {}) {
+  return db.transaction('rw', db.annotations, async () => {
+    const existing = await db.annotations.where('bookId').equals(locator.bookId).and(item => item.locator.cfi === locator.cfi).first()
+    const item: Annotation = { id: existing?.id ?? crypto.randomUUID(), bookId: locator.bookId, locator, chapter, note: changes.note ?? existing?.note ?? '',
+      explanation: changes.explanation ?? existing?.explanation, color: changes.color ?? existing?.color ?? defaultHighlight.id,
+      highlighted: changes.highlighted ?? existing?.highlighted ?? true, createdAt: existing?.createdAt ?? Date.now(), updatedAt: Date.now() }
+    await db.annotations.put(item)
+    return item
+  })
+}
+export async function cancelHighlight(bookId: string, annotationId: string) {
+  return db.transaction('rw', db.annotations, async () => {
+    const existing = await db.annotations.get(annotationId)
+    if (!existing || existing.bookId !== bookId || existing.highlighted === false) return
+    if (existing.note.trim() || existing.explanation?.trim()) {
+      await db.annotations.update(annotationId, { highlighted: false, updatedAt: Date.now() })
+      return 'kept-note' as const
+    }
+    await db.annotations.delete(annotationId)
+    return 'removed' as const
+  })
 }
 export async function saveLearning(locator: Locator, chapter: string, explanation: string) {
   if (!explanation.trim()) throw new Error('解释内容不能为空。')

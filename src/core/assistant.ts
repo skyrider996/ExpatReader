@@ -17,14 +17,21 @@ export class BookToolSession {
   limited = false
   readonly citations: Citation[] = []
   private locators = new Map<string, Locator>()
-  constructor(readonly content: ContentService, readonly search: BookSearch) {}
+  constructor(readonly content: ContentService, readonly search: BookSearch, private citationOffset = 0) {}
+  addContext(text: string) {
+    const remaining = Math.max(0, 30000 - this.characters)
+    const result = text.slice(0, remaining)
+    this.characters += result.length
+    if (result.length < text.length) this.limited = true
+    return result
+  }
   private excerpts(passages: { id: string; text: string; locator: Locator; chapter: string }[]) {
     const result = []
     for (const p of passages) {
       const text = p.text.slice(0, Math.max(0, 30000 - this.characters))
       if (!text) { this.limited = true; break }
       this.characters += text.length
-      const citation = { id: `R${this.citations.length + 1}`, text, locator: p.locator, chapter: p.chapter }
+      const citation = { id: `R${this.citationOffset + this.citations.length + 1}`, text, locator: p.locator, chapter: p.chapter }
       this.citations.push(citation); this.locators.set(p.id, p.locator)
       result.push({ passageId: p.id, citation: citation.id, chapter: p.chapter, untrustedBookText: text })
     }
@@ -89,6 +96,10 @@ export async function askBook(complete: Complete, content: ContentService, searc
       messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(result) })
     }
   }
+  return verifiedAnswer(answer, session)
+}
+
+export function verifiedAnswer(answer: string, session: BookToolSession): Answer {
   const known = new Map(session.citations.map(x => [x.id, x]))
   const used = new Set<string>()
   answer = answer.replace(/\[R(\d+)\]/g, (_match, number) => {

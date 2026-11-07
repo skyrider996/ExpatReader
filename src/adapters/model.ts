@@ -13,12 +13,25 @@ export function endpointURL(endpoint: string) {
   if (!url.pathname.endsWith('/chat/completions')) url.pathname += '/chat/completions'
   return url.href
 }
-export function modelClient(settings: ModelSettings): Complete {
+function modelEndpoint(settings: ModelSettings) {
+  if (settings.mode === 'codex') throw new Error('本机 Codex 需使用阅读对话连接，不能通过 API 接口调用。')
   const url = endpointURL(settings.endpoint)
   if (settings.mode === 'agent') {
     const address = new URL(url)
     if (address.protocol !== 'http:' || address.hostname !== '127.0.0.1' || !address.port) throw new Error('本地 Agent 地址需为带端口的 http://127.0.0.1 地址。')
   }
+  return url
+}
+export async function listModels(settings: ModelSettings, signal: AbortSignal): Promise<string[]> {
+  const url = modelEndpoint(settings).replace(/\/chat\/completions$/, '/models')
+  const response = await fetch(url, { signal: AbortSignal.any([signal, AbortSignal.timeout(10000)]), credentials: 'omit', redirect: 'error', headers: settings.apiKey ? { Authorization: `Bearer ${settings.apiKey}` } : {} })
+  if (!response.ok) throw new Error('无法获取模型列表。')
+  const data = await response.json()
+  if (!Array.isArray(data?.data)) throw new Error('模型列表格式不兼容。')
+  return [...new Set<string>(data.data.map((item: { id?: unknown }) => item.id).filter((id: unknown): id is string => typeof id === 'string' && !!id.trim()))].sort()
+}
+export function modelClient(settings: ModelSettings): Complete {
+  const url = modelEndpoint(settings)
   if (!settings.model.trim()) throw new Error('请先填写模型名称。')
   return async (messages, tools, signal) => {
     const timeout = AbortSignal.timeout(90000)

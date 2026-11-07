@@ -11,6 +11,8 @@ test('learning records do not insert text after reload', async ({ page }) => {
     const selection = getSelection()!; selection.removeAllRanges(); selection.addRange(range)
     document.dispatchEvent(new Event('pointerup'))
   })
+  await page.getByLabel('打开词典与翻译').click()
+  await page.getByRole('button', { name: '手动编辑', exact: true }).click()
   await page.getByLabel('词句解释').fill('不情愿地')
   await page.getByRole('button', { name: '保存解释' }).click()
   await expect(page.locator('footer')).toContainText('学习记录已保存')

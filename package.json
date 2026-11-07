@@ -1,7 +1,7 @@
 {
   "name": "incremental-reader",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 5173 --strictPort",
@@ -12,20 +12,22 @@
     "fixtures": "node scripts/create-fixtures.mjs"
   },
   "dependencies": {
-    "vue": "3.5.44",
     "dexie": "4.4.6",
+    "foliate-js": "1.0.1",
     "minisearch": "7.2.0",
-    "foliate-js": "1.0.1"
+    "vue": "3.5.44",
+    "ws": "8.22.0"
   },
   "devDependencies": {
-    "@vitejs/plugin-vue": "6.0.10",
-    "vite": "8.3.4",
-    "typescript": "~5.9.3",
-    "vue-tsc": "^3.1.0",
-    "vitest": "^4.0.0",
     "@playwright/test": "^1.56.0",
     "@types/node": "^24.0.0",
+    "@types/ws": "8.18.1",
+    "@vitejs/plugin-vue": "6.0.10",
+    "fake-indexeddb": "^6.2.0",
     "fflate": "^0.8.2",
-    "fake-indexeddb": "^6.2.0"
+    "typescript": "~5.9.3",
+    "vite": "8.3.4",
+    "vitest": "^4.0.0",
+    "vue-tsc": "^3.1.0"
   }
 }
